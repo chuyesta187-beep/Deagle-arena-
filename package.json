@@ -1,16 +1,20 @@
 {
-  "name": "discord-bot-ticket-system",
+  "name": "discord-multi-bot",
   "version": "1.0.0",
-  "description": "Bot de Discord con sistema de tickets y modales",
+  "description": "Bot Discord con tickets, moderación, panels y sistema híbrido",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "dev": "node index.js"
+  },
+  "dependencies": {
+    "axios": "^1.6.0",
+    "discord.js": "^14.14.1",
+    "express": "^4.18.2"
   },
   "engines": {
     "node": "18.x"
   },
-  "dependencies": {
-    "discord.js": "^14.16.3",
-    "express": "^4.18.2"
-  }
+  "author": "",
+  "license": "ISC"
 }
