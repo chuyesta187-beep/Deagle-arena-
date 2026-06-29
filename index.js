@@ -1,3 +1,6 @@
+const express = require("express");
+const app = express();
+
 const { 
     Client, 
     GatewayIntentBits, 
@@ -16,7 +19,17 @@ const {
     REST
 } = require('discord.js');
 
-// Create the Discord client instance with Intents and Partials configuration
+// 🌐 EXPRESS WEB SERVER CONFIGURATION
+app.get("/", (req, res) => {
+    res.send("🤖 Discord Bot is active");
+});
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+    console.log(`🌐 Web server successfully listening on port ${PORT}`);
+});
+
+// 🤖 DISCORD CLIENT CONFIGURATION
 const client = new Client({ 
     intents: [
         GatewayIntentBits.Guilds,             
@@ -24,45 +37,43 @@ const client = new Client({
         GatewayIntentBits.MessageContent,     
         GatewayIntentBits.DirectMessages      
     ],
-    partials: [Partials.Channel] // Enabled Channel partial to safely parse DMs
+    partials: [Partials.Channel] 
 });
 
 // ⚙️ GLOBAL TICKET SYSTEM CONFIGURATION
 const CONFIG = {
-    TOKEN: process.env.TOKEN,                  // Securely pulled from environment variables
-    CLIENT_ID: '1521212807754809507',          // Your Bot Client ID
-    GUILD_ID: '1519740211301716120',           // Your Guild/Server ID
-    PRIVATE_CATEGORY: '1520097680972447744',   // 📂 PRIVATE TICKETS Category
+    TOKEN: process.env.TOKEN,                  
+    CLIENT_ID: '1521212807754809507',          
+    GUILD_ID: '1519740211301716120',           
+    PRIVATE_CATEGORY: '1520097680972447744',   
     APPEAL: {
-        CHANNEL: '1521208884197589164',        // 📩 BAN APPEAL Channel
-        ROLE: '1521208595557908611'            // Authorized Review Role
+        CHANNEL: '1521208884197589164',        
+        ROLE: '1521208595557908611'            
     },
     CREATOR: {
-        CHANNEL: '1521208966556680202',        // 🎥 CONTENT CREATOR Channel
-        ROLE: '1521208730543460505'            // Authorized Review Role
+        CHANNEL: '1521208966556680202',        
+        ROLE: '1521208730543460505'            
     },
     INQUIRY: {
-        CHANNEL: '1521209048371040327',        // ❓ INQUIRY OR QUESTION Channel
-        ROLE: '1521208655628996689'            // Authorized Review Role
+        CHANNEL: '1521209048371040327',        
+        ROLE: '1521208655628996689'            
     }
 };
 
-// 📂 IN-MEMORY STORAGE (Temporary Database)
-// Saves the status of the request (Approved/Denied), staff reason, and moderator using the user ID as the key.
+// 📂 IN-MEMORY STORAGE (Temporary Databases)
 const databaseDeResultados = new Map(); 
+const messageMap = new Map(); // Guarda la relación completa { messageId, channelId }
 
 // --- EVENT: BOT READY & REGISTER SLASH COMMANDS ---
 client.once('ready', async () => {
     console.log(`🤖 Bot successfully logged in as ${client.user.tag}`);
     
-    // Define Slash Commands (/panel) using the Discord Builder
     const commands = [
         new SlashCommandBuilder().setName('panel-appeal').setDescription('Sends the panel with the Ban Appeal button'),
         new SlashCommandBuilder().setName('panel-creator').setDescription('Sends the panel with the Content Creator button'),
         new SlashCommandBuilder().setName('panel-inquiry').setDescription('Sends the panel with the Inquiry/Question button')
     ].map(command => command.toJSON());
 
-    // Initialize the Discord REST service to register commands in the guild
     const rest = new REST({ version: '10' }).setToken(CONFIG.TOKEN);
     try {
         await rest.put(Routes.applicationGuildCommands(CONFIG.CLIENT_ID, CONFIG.GUILD_ID), { body: commands });
@@ -76,8 +87,9 @@ client.once('ready', async () => {
 client.on('interactionCreate', async interaction => {
     if (!interaction.isChatInputCommand()) return;
 
-    // Execution of the Ban Appeal panel command
     if (interaction.commandName === 'panel-appeal') {
+        await interaction.deferReply(); 
+
         const embed = new EmbedBuilder()
             .setTitle('📩 BAN APPEAL')
             .setDescription('If you were sanctioned and believe it was a mistake, press the button below to start your appeal process.')
@@ -86,24 +98,26 @@ client.on('interactionCreate', async interaction => {
         const row = new ActionRowBuilder().addComponents(
             new ButtonBuilder().setCustomId('btn_open_appeal').setLabel('Appeal Sanction').setStyle(ButtonStyle.Primary)
         );
-        await interaction.reply({ embeds: [embed], components: [row] });
+        await interaction.editReply({ embeds: [embed], components: [row] });
     }
 
-    // Execution of the Content Creator panel command
     if (interaction.commandName === 'panel-creator') {
+        await interaction.deferReply(); 
+
         const embed = new EmbedBuilder()
             .setTitle('🎥 CONTENT CREATOR APPLICATION')
             .setDescription('Are you a content creator wanting to get a rank in our community? Apply right here!')
             .setColor(0x9146FF);
         
         const row = new ActionRowBuilder().addComponents(
-            new ButtonBuilder().setCustomId('btn_open_creator').setLabel('Apply Now').setStyle(ButtonStyle.Purple)
+            new ButtonBuilder().setCustomId('btn_open_creator').setLabel('Apply Now').setStyle(ButtonStyle.Primary)
         );
-        await interaction.reply({ embeds: [embed], components: [row] });
+        await interaction.editReply({ embeds: [embed], components: [row] });
     }
 
-    // Execution of the General Inquiries panel command
     if (interaction.commandName === 'panel-inquiry') {
+        await interaction.deferReply();
+
         const embed = new EmbedBuilder()
             .setTitle('❓ INQUIRY OR QUESTION')
             .setDescription('Do you have doubts, concerns, or an issue inside the game? Send your inquiry to the support team.')
@@ -112,16 +126,14 @@ client.on('interactionCreate', async interaction => {
         const row = new ActionRowBuilder().addComponents(
             new ButtonBuilder().setCustomId('btn_open_inquiry').setLabel('Send Inquiry').setStyle(ButtonStyle.Success)
         );
-        await interaction.reply({ embeds: [embed], components: [row] });
+        await interaction.editReply({ embeds: [embed], components: [row] });
     }
 });
 
 // --- EVENT: TRIGGERING FORM MODALS ---
-// Activates when a regular user clicks any of the panel buttons.
 client.on('interactionCreate', async interaction => {
     if (!interaction.isButton()) return;
 
-    // Display Appeal Modal
     if (interaction.customId === 'btn_open_appeal') {
         const modal = new ModalBuilder().setCustomId('modal_appeal').setTitle('Ban Appeal Form');
         modal.addComponents(
@@ -133,7 +145,6 @@ client.on('interactionCreate', async interaction => {
         await interaction.showModal(modal);
     }
 
-    // Display Content Creator Modal
     if (interaction.customId === 'btn_open_creator') {
         const modal = new ModalBuilder().setCustomId('modal_creator').setTitle('Content Creator Application');
         modal.addComponents(
@@ -146,7 +157,6 @@ client.on('interactionCreate', async interaction => {
         await interaction.showModal(modal);
     }
 
-    // Display Inquiries / Questions Modal
     if (interaction.customId === 'btn_open_inquiry') {
         const modal = new ModalBuilder().setCustomId('modal_inquiry').setTitle('New Inquiry');
         modal.addComponents(
@@ -203,8 +213,21 @@ client.on('interactionCreate', async interaction => {
         ];
     }
 
-    const channel = await interaction.guild.channels.fetch(sendChannel);
-    if (!channel) return interaction.reply({ content: 'Critical Error: Target review channel not found in the guild.', ephemeral: true });
+    if (!sendChannel) {
+        return interaction.reply({
+            content: "❌ Config error: channel not defined",
+            ephemeral: true
+        });
+    }
+
+    const channel = await interaction.guild.channels.fetch(sendChannel).catch(() => null);
+
+    if (!channel) {
+        return interaction.reply({
+            content: "❌ Target channel not found",
+            ephemeral: true
+        });
+    }
 
     const embedStaff = new EmbedBuilder()
         .setTitle(title)
@@ -219,7 +242,18 @@ client.on('interactionCreate', async interaction => {
         new ButtonBuilder().setCustomId(`staff_ticket_${userId}`).setLabel('📩 Open Ticket').setStyle(ButtonStyle.Primary)
     );
 
-    await channel.send({ content: `<@&${targetRole}>`, embeds: [embedStaff], components: [staffButtons] });
+    const msg = await channel.send({
+        content: `<@&${targetRole}>`,
+        embeds: [embedStaff],
+        components: [staffButtons]
+    });
+
+    // ✔ PASO EXCELENTE: Guardamos el par mapeado del ID del Mensaje + ID del Canal correcto
+    messageMap.set(userId, {
+        messageId: msg.id,
+        channelId: channel.id
+    });
+
     await interaction.reply({ content: finalMsg, ephemeral: true });
 });
 
@@ -275,7 +309,9 @@ client.on('interactionCreate', async interaction => {
             await interaction.editReply({ content: `Private ticket channel created successfully: ${privateChannel}` });
         } catch (error) {
             console.error('Error creating private channel ticket:', error);
-            await interaction.editReply({ content: '❌ A technical error occurred while trying to build the private ticket text channel.' });
+            await interaction.editReply({ 
+                content: '❌ A technical error occurred while creating the ticket.' 
+            });
         }
     }
 });
@@ -296,11 +332,25 @@ client.on('interactionCreate', async interaction => {
         moderator: interaction.user.tag
     });
 
-    const originalMessage = interaction.message;
-    if (originalMessage) {
-        const updatedEmbed = EmbedBuilder.from(originalMessage.embeds[0])
-            .setFooter({ text: `Action closed: ${action.toUpperCase()} by ${interaction.user.tag}` });
-        await originalMessage.edit({ embeds: [updatedEmbed], components: [] });
+    // ✅ FIX CORRECTO APLICADO AQUÍ: Recuperamos de forma segura el canal e ID originales
+    const data = messageMap.get(targetId);
+
+    if (data) {
+        const channel = await interaction.guild.channels.fetch(data.channelId).catch(() => null);
+
+        if (channel) {
+            const message = await channel.messages.fetch(data.messageId).catch(() => null);
+
+            if (message && message.embeds[0]) {
+                const updatedEmbed = EmbedBuilder.from(message.embeds[0])
+                    .setFooter({ text: `Action closed: ${action.toUpperCase()} by ${interaction.user.tag}` });
+
+                await message.edit({
+                    embeds: [updatedEmbed],
+                    components: [] // Remueve los botones de forma definitiva para evitar dobles clics
+                }).catch(err => console.error("Error editing original embed message:", err));
+            }
+        }
     }
 
     const user = await interaction.client.users.fetch(targetId).catch(() => null);
