@@ -1,5 +1,5 @@
 const express = require("express");
-const fs = require("fs"); // 💾 Módulo nativo para leer/escribir archivos
+const fs = require("fs");
 const app = express();
 
 const { 
@@ -22,13 +22,27 @@ const {
 
 // 🌐 EXPRESS WEB SERVER CONFIGURATION
 app.get("/", (req, res) => {
-    res.send("🤖 Discord Bot is active with Persistent Storage");
+    res.send("🤖 Bot de Alta Disponibilidad - Blindaje Nivel Kernel");
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-    console.log(`🌐 Web server successfully listening on port ${PORT}`);
-});
+app.listen(PORT, () => console.log(`🌐 Servidor web escuchando en el puerto ${PORT}`));
+
+// ⚙️ GLOBAL TICKET SYSTEM CONFIGURATION
+const CONFIG = {
+    TOKEN: process.env.TOKEN,                  
+    CLIENT_ID: process.env.CLIENT_ID || '1521212807754809507',          
+    GUILD_ID: process.env.GUILD_ID || '1519740211301716120',           
+    PRIVATE_CATEGORY: '1520097680972447744',   
+    APPEAL: { CHANNEL: '1521208884197589164', ROLE: '1521208595557908611' },
+    CREATOR: { CHANNEL: '1521208966556680202', ROLE: '1521208730543460505' },
+    INQUIRY: { CHANNEL: '1521209048371040327', ROLE: '1521208655628996689' }
+};
+
+if (!CONFIG.TOKEN) {
+    console.error("❌ ERROR FATAL: La variable de entorno 'TOKEN' es obligatoria. Apagando.");
+    process.exit(1);
+}
 
 // 🤖 DISCORD CLIENT CONFIGURATION
 const client = new Client({ 
@@ -38,377 +52,355 @@ const client = new Client({
         GatewayIntentBits.MessageContent,     
         GatewayIntentBits.DirectMessages      
     ],
-    partials: [Partials.Channel] 
+    partials: [Partials.Channel, Partials.User, Partials.Message] 
 });
 
-// ⚙️ GLOBAL TICKET SYSTEM CONFIGURATION (Asegúrate de que estos IDs existan)
-const CONFIG = {
-    TOKEN: process.env.TOKEN,                  
-    CLIENT_ID: '1521212807754809507',          
-    GUILD_ID: '1519740211301716120',           
-    PRIVATE_CATEGORY: '1520097680972447744',   
-    APPEAL: {
-        CHANNEL: '1521208884197589164',        
-        ROLE: '1521208595557908611'            
-    },
-    CREATOR: {
-        CHANNEL: '1521208966556680202',        
-        ROLE: '1521208730543460505'            
-    },
-    INQUIRY: {
-        CHANNEL: '1521209048371040327',        
-        ROLE: '1521208655628996689'            
-    }
-};
+// 💾 PERSISTENCIA SEGURA ATÓMICA (FIX 5: Anti-Corrupción por reinicios abruptos de Render)
+const DB_FILE = "./results.json";
+const MSG_FILE = "./messages.json";
 
-// 💾 FUNCIONES DE PERSISTENCIA LOCAL (JSON ANTI-REINICIOS)
-function loadJSON(filename) {
-    if (fs.existsSync(filename)) {
-        try {
-            const data = JSON.parse(fs.readFileSync(filename, "utf-8"));
-            return new Map(data);
-        } catch (e) {
-            console.error(`Error leyendo ${filename}, creando nuevo Map.`, e);
+function safeLoad(file) {
+    if (!fs.existsSync(file)) return {};
+    try { 
+        const content = fs.readFileSync(file, "utf8").trim();
+        if (!content) return {};
+        return JSON.parse(content); 
+    } catch (e) { 
+        console.error(`❌ Error leyendo archivo ${file}:`, e); 
+        return {}; 
+    }
+}
+
+function safeSave(file, data) {
+    const tmpFile = `${file}.tmp`;
+    try { 
+        // 1. Escribimos primero de forma síncrona en un archivo temporal
+        fs.writeFileSync(tmpFile, JSON.stringify(data, null, 2), "utf8"); 
+        // 2. Renombramos de forma atómica. Si el proceso muere, el original queda intacto y no en 0 bytes.
+        fs.renameSync(tmpFile, file);
+    } catch (e) { 
+        console.error(`❌ Error crítico guardando archivo atómico ${file}:`, e); 
+        // Limpieza del archivo temporal si falló el renombrado
+        if (fs.existsSync(tmpFile)) try { fs.unlinkSync(tmpFile); } catch {}
+    }
+}
+
+let database = safeLoad(DB_FILE);
+let messageDatabase = safeLoad(MSG_FILE);
+
+// 🛠️ FUNCIÓN AUXILIAR: RESPUESTA INTELIGENTE ABSOLUTA (FIX 1)
+async function smartReply(interaction, payload) {
+    try {
+        // Validación dual estricta nativa de discord.js v14 para evitar InteractionAlreadyReplied
+        if (interaction.deferred || interaction.replied) {
+            return await interaction.followUp(payload);
+        } else {
+            return await interaction.reply(payload);
         }
+    } catch (err) {
+        console.error("❌ Error de desincronización controlando smartReply:", err);
     }
-    return new Map();
 }
 
-function saveJSON(filename, mapData) {
-    fs.writeFileSync(filename, JSON.stringify([...mapData], null, 2), "utf-8");
-}
-
-// Carga inicial desde archivos locales
-const databaseDeResultados = loadJSON("./database.json");
-const messageMap = loadJSON("./messages.json");
-
-// --- EVENT: BOT READY & REGISTER SLASH COMMANDS ---
+// --- EVENT: READY & REGISTRO DE COMANDOS ---
 client.once('ready', async () => {
-    console.log(`🤖 Bot successfully logged in as ${client.user.tag}`);
-    
+    console.log(`🟢 Bot conectado exitosamente como: ${client.user.tag}`);
+
     const commands = [
-        new SlashCommandBuilder().setName('panel-appeal').setDescription('Sends the panel with the Ban Appeal button'),
-        new SlashCommandBuilder().setName('panel-creator').setDescription('Sends the panel with the Content Creator button'),
-        new SlashCommandBuilder().setName('panel-inquiry').setDescription('Sends the panel with the Inquiry/Question button')
-    ].map(command => command.toJSON());
+        new SlashCommandBuilder().setName('panel-appeal').setDescription('Envía el panel de apelaciones de baneo'),
+        new SlashCommandBuilder().setName('panel-creator').setDescription('Envía el panel de postulación a creador'),
+        new SlashCommandBuilder().setName('panel-inquiry').setDescription('Envía el panel de dudas y soporte')
+    ].map(cmd => cmd.toJSON());
 
     const rest = new REST({ version: '10' }).setToken(CONFIG.TOKEN);
     try {
         await rest.put(Routes.applicationGuildCommands(CONFIG.CLIENT_ID, CONFIG.GUILD_ID), { body: commands });
-        console.log('✅ Slash commands (/panel) successfully registered in the server.');
+        console.log("✅ Comandos de barra '/' registrados correctamente.");
     } catch (error) {
-        console.error('❌ Error registering slash commands:', error);
+        console.error('❌ Error registrando comandos de barra:', error);
     }
 });
 
-// --- EVENT: HANDLING SLASH COMMANDS (/panel) ---
+// --- 🎯 EVENTO INTERACTIONCREATE UNIFICADO ---
 client.on('interactionCreate', async interaction => {
-    if (!interaction.isChatInputCommand()) return;
+    try {
+        // 🔴 FIX 3: Verificación e inmunidad ante contextos externos / DMs de usuario globales
+        if (!interaction.guild || !interaction.inGuild()) return;
 
-    if (interaction.commandName === 'panel-appeal') {
-        await interaction.deferReply(); 
-
-        const embed = new EmbedBuilder()
-            .setTitle('📩 BAN APPEAL')
-            .setDescription('If you were sanctioned and believe it was a mistake, press the button below to start your appeal process.')
-            .setColor(0x0099FF);
-        
-        const row = new ActionRowBuilder().addComponents(
-            new ButtonBuilder().setCustomId('btn_open_appeal').setLabel('Appeal Sanction').setStyle(ButtonStyle.Primary)
-        );
-        await interaction.editReply({ embeds: [embed], components: [row] });
-    }
-
-    if (interaction.commandName === 'panel-creator') {
-        await interaction.deferReply(); 
-
-        const embed = new EmbedBuilder()
-            .setTitle('🎥 CONTENT CREATOR APPLICATION')
-            .setDescription('Are you a content creator wanting to get a rank in our community? Apply right here!')
-            .setColor(0x9146FF);
-        
-        const row = new ActionRowBuilder().addComponents(
-            new ButtonBuilder().setCustomId('btn_open_creator').setLabel('Apply Now').setStyle(ButtonStyle.Primary)
-        );
-        await interaction.editReply({ embeds: [embed], components: [row] });
-    }
-
-    if (interaction.commandName === 'panel-inquiry') {
-        await interaction.deferReply();
-
-        const embed = new EmbedBuilder()
-            .setTitle('❓ INQUIRY OR QUESTION')
-            .setDescription('Do you have doubts, concerns, or an issue inside the game? Send your inquiry to the support team.')
-            .setColor(0x00FF87);
-        
-        const row = new ActionRowBuilder().addComponents(
-            new ButtonBuilder().setCustomId('btn_open_inquiry').setLabel('Send Inquiry').setStyle(ButtonStyle.Success)
-        );
-        await interaction.editReply({ embeds: [embed], components: [row] });
-    }
-});
-
-// --- EVENT: TRIGGERING FORM MODALS ---
-client.on('interactionCreate', async interaction => {
-    if (!interaction.isButton()) return;
-
-    if (interaction.customId === 'btn_open_appeal') {
-        const modal = new ModalBuilder().setCustomId('modal_appeal').setTitle('Ban Appeal Form');
-        modal.addComponents(
-            new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('q1').setLabel('What is your Roblox username?').setStyle(TextInputStyle.Short).setRequired(true)),
-            new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('q2').setLabel('Why were you banned?').setStyle(TextInputStyle.Paragraph).setRequired(true)),
-            new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('q3').setLabel('Why do you think you should be unbanned?').setStyle(TextInputStyle.Paragraph).setRequired(true)),
-            new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('q4').setLabel('Provide a photo or video link as proof').setStyle(TextInputStyle.Short).setRequired(true))
-        );
-        await interaction.showModal(modal);
-    }
-
-    if (interaction.customId === 'btn_open_creator') {
-        const modal = new ModalBuilder().setCustomId('modal_creator').setTitle('Content Creator Application');
-        modal.addComponents(
-            new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('q1').setLabel('What is your Roblox username?').setStyle(TextInputStyle.Short).setRequired(true)),
-            new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('q2').setLabel('On which platform do you create content?').setStyle(TextInputStyle.Short).setRequired(true)),
-            new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('q3').setLabel('Send the link to your channel or profile').setStyle(TextInputStyle.Short).setRequired(true)),
-            new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('q4').setLabel('How many followers/subscribers do you have?').setStyle(TextInputStyle.Short).setRequired(true)),
-            new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('q5').setLabel('Why do you want to be a Content Creator?').setStyle(TextInputStyle.Paragraph).setRequired(true))
-        );
-        await interaction.showModal(modal);
-    }
-
-    if (interaction.customId === 'btn_open_inquiry') {
-        const modal = new ModalBuilder().setCustomId('modal_inquiry').setTitle('New Inquiry');
-        modal.addComponents(
-            new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('q1').setLabel('What is your Roblox username?').setStyle(TextInputStyle.Short).setRequired(true)),
-            new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('q2').setLabel('What is your inquiry or problem?').setStyle(TextInputStyle.Short).setRequired(true)),
-            new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('q3').setLabel('Explain more details').setStyle(TextInputStyle.Paragraph).setRequired(true)),
-            new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('q4').setLabel('Photo/Video links or proof (Optional)').setStyle(TextInputStyle.Short).setRequired(false))
-        );
-        await interaction.showModal(modal);
-    }
-});
-
-// --- EVENT: MODAL SUBMISSION & STAFF CHANNEL NOTIFICATION ---
-client.on('interactionCreate', async interaction => {
-    if (!interaction.isModalSubmit()) return;
-
-    let sendChannel, targetRole, title, fields = [], finalMsg;
-    const userId = interaction.user.id;
-
-    // Control estricto de Strings para evitar el error "channel not defined" 🛠️
-    if (interaction.customId === 'modal_appeal') {
-        sendChannel = CONFIG.APPEAL.CHANNEL;
-        targetRole = CONFIG.APPEAL.ROLE;
-        title = '🚨 NEW BAN APPEAL';
-        finalMsg = '✅ Thanks for submitting your appeal. A staff member will review it shortly.';
-        fields = [
-            { name: '1. What is your Roblox username?', value: interaction.fields.getTextInputValue('q1') },
-            { name: '2. Why were you banned?', value: interaction.fields.getTextInputValue('q2') },
-            { name: '3. Why do you think you should be unbanned?', value: interaction.fields.getTextInputValue('q3') },
-            { name: '4. Provide a photo or video link as proof', value: interaction.fields.getTextInputValue('q4') }
-        ];
-    } else if (interaction.customId === 'modal_creator') {
-        sendChannel = CONFIG.CREATOR.CHANNEL;
-        targetRole = CONFIG.CREATOR.ROLE;
-        title = '🎥 NEW CREATOR APPLICATION';
-        finalMsg = '✅ Thanks for submitting your application. A staff member will review it shortly.';
-        fields = [
-            { name: '1. What is your Roblox username?', value: interaction.fields.getTextInputValue('q1') },
-            { name: '2. What is your Discord user?', value: `${interaction.user.tag} (${interaction.user.id})` },
-            { name: '3. On which platform do you create content?', value: interaction.fields.getTextInputValue('q2') },
-            { name: '4. Send the link to your channel or profile', value: interaction.fields.getTextInputValue('q3') },
-            { name: '5. How many followers or subscribers do you have?', value: interaction.fields.getTextInputValue('q4') },
-            { name: '6. Why do you want to be a Content Creator?', value: interaction.fields.getTextInputValue('q5') }
-        ];
-    } else if (interaction.customId === 'modal_inquiry') {
-        sendChannel = CONFIG.INQUIRY.CHANNEL;
-        targetRole = CONFIG.INQUIRY.ROLE;
-        title = '❓ NEW INQUIRY / QUESTION';
-        finalMsg = '✅ Thanks for submitting your inquiry. A staff member will review it shortly.';
-        fields = [
-            { name: '1. What is your Roblox username?', value: interaction.fields.getTextInputValue('q1') },
-            { name: '2. What is your inquiry or problem?', value: interaction.fields.getTextInputValue('q2') },
-            { name: '3. Explain more details', value: interaction.fields.getTextInputValue('q3') },
-            { name: '4. Links / Proofs', value: interaction.fields.getTextInputValue('q4') || 'Not provided' }
-        ];
-    }
-
-    if (!sendChannel) {
-        return interaction.reply({
-            content: "❌ Config error: channel not defined. Revisa los IDs o los customId en los Modals.",
-            ephemeral: true
-        });
-    }
-
-    const channel = await interaction.guild.channels.fetch(sendChannel).catch(() => null);
-
-    if (!channel) {
-        return interaction.reply({
-            content: "❌ Target channel not found",
-            ephemeral: true
-        });
-    }
-
-    const embedStaff = new EmbedBuilder()
-        .setTitle(title)
-        .setDescription(`Submitted by user: <@${userId}> (${userId})`)
-        .addFields(fields)
-        .setColor(0x2F3136)
-        .setTimestamp();
-
-    const staffButtons = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId(`staff_approve_${userId}`).setLabel('🟢 Approve').setStyle(ButtonStyle.Success),
-        new ButtonBuilder().setCustomId(`staff_deny_${userId}`).setLabel('🔴 Reject').setStyle(ButtonStyle.Danger),
-        new ButtonBuilder().setCustomId(`staff_ticket_${userId}`).setLabel('📩 Open Ticket').setStyle(ButtonStyle.Primary)
-    );
-
-    const msg = await channel.send({
-        content: `<@&${targetRole}>`,
-        embeds: [embedStaff],
-        components: [staffButtons]
-    });
-
-    // Guardado de datos persistente en archivo local 🚀
-    messageMap.set(userId, {
-        messageId: msg.id,
-        channelId: channel.id
-    });
-    saveJSON("./messages.json", messageMap);
-
-    await interaction.reply({ content: finalMsg, ephemeral: true });
-});
-
-// --- EVENT: STAFF ACTION INTERACTIVE BUTTONS ---
-client.on('interactionCreate', async interaction => {
-    if (!interaction.isButton()) return;
-    if (!interaction.customId.startsWith('staff_')) return;
-
-    const parts = interaction.customId.split('_');
-    const action = parts[1];    
-    const targetId = parts[2];  
-
-    let hasRole = false;
-    if (interaction.channelId === CONFIG.APPEAL.CHANNEL && interaction.member.roles.cache.has(CONFIG.APPEAL.ROLE)) hasRole = true;
-    if (interaction.channelId === CONFIG.CREATOR.CHANNEL && interaction.member.roles.cache.has(CONFIG.CREATOR.ROLE)) hasRole = true;
-    if (interaction.channelId === CONFIG.INQUIRY.CHANNEL && interaction.member.roles.cache.has(CONFIG.INQUIRY.ROLE)) hasRole = true;
-
-    if (!hasRole) {
-        return interaction.reply({ content: '❌ You do not have the required role or permissions to use these buttons.', ephemeral: true });
-    }
-
-    const targetUser = await interaction.client.users.fetch(targetId).catch(() => null);
-
-    if (action === 'approve' || action === 'deny') {
-        const decisionModal = new ModalBuilder()
-            .setCustomId(`modal_decision_${action}_${targetId}`)
-            .setTitle(action === 'approve' ? 'Approve Application' : 'Reject Application');
-        
-        decisionModal.addComponents(
-            new ActionRowBuilder().addComponents(
-                new TextInputBuilder().setCustomId('staff_reason').setLabel('Staff Message / Rationale').setStyle(TextInputStyle.Paragraph).setRequired(true)
-            )
-        );
-        return await interaction.showModal(decisionModal);
-    }
-
-    if (action === 'ticket') {
-        await interaction.deferReply({ ephemeral: true });
-        try {
-            const guild = interaction.guild;
-            const privateChannel = await guild.channels.create({
-                name: `ticket-${targetUser ? targetUser.username : targetId}`,
-                type: ChannelType.GuildText,
-                parent: CONFIG.PRIVATE_CATEGORY,
-                permissionOverwrites: [
-                    { id: guild.id, deny: [PermissionFlagsBits.ViewChannel] }, 
-                    { id: targetId, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages] }, 
-                    { id: interaction.user.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages] } 
-                ]
-            });
-
-            await privateChannel.send(`👋 Hello <@${targetId}>! Staff member <@${interaction.user.id}> has opened this private ticket to discuss your submission.`);
-            await interaction.editReply({ content: `Private ticket channel created successfully: ${privateChannel}` });
-        } catch (error) {
-            console.error('Error creating private channel ticket:', error);
-            await interaction.editReply({ 
-                content: '❌ A technical error occurred while creating the ticket.' 
-            });
-        }
-    }
-});
-
-// --- EVENT: CLOSING SUBMISSION AND PROCESSING VERDICT REASON ---
-client.on('interactionCreate', async interaction => {
-    if (!interaction.isModalSubmit()) return;
-    if (!interaction.customId.startsWith('modal_decision_')) return;
-
-    const parts = interaction.customId.split('_');
-    const action = parts[2];       
-    const targetId = parts[3];     
-    const staffMsg = interaction.fields.getTextInputValue('staff_reason');
-
-    // Guardar veredicto permanentemente en base de datos local JSON 💾
-    databaseDeResultados.set(targetId, {
-        status: action === 'approve' ? '🟢 APPROVED' : '🔴 REJECTED',
-        reason: staffMsg,
-        moderator: interaction.user.tag
-    });
-    saveJSON("./database.json", databaseDeResultados);
-
-    // Búsqueda robusta inter-canales usando tu lógica mejorada 🌟
-    const data = messageMap.get(targetId);
-
-    if (data) {
-        const channel = await interaction.guild.channels.fetch(data.channelId).catch(() => null);
-
-        if (channel) {
-            const message = await channel.messages.fetch(data.messageId).catch(() => null);
-
-            if (message && message.embeds[0]) {
-                const updatedEmbed = EmbedBuilder.from(message.embeds[0])
-                    .setFooter({ text: `Action closed: ${action.toUpperCase()} by ${interaction.user.tag}` });
-
-                await message.edit({
-                    embeds: [updatedEmbed],
-                    components: [] // Remueve los botones de forma definitiva para evitar dobles clics
-                }).catch(err => console.error("Error editing original embed message:", err));
+        // ==========================================
+        // 1. MANEJO DE SLASH COMMANDS (/panel-*)
+        // ==========================================
+        if (interaction.isChatInputCommand()) {
+            await interaction.deferReply({ ephemeral: true });
+            
+            if (interaction.commandName === 'panel-appeal') {
+                const embed = new EmbedBuilder().setTitle('📩 BAN APPEAL').setDescription('Si fuiste sancionado, presiona el botón inferior para apelar.').setColor(0x0099FF);
+                const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('btn_open_appeal').setLabel('Apelar Sanción').setStyle(ButtonStyle.Primary));
+                return await interaction.editReply({ embeds: [embed], components: [row] });
+            }
+            if (interaction.commandName === 'panel-creator') {
+                const embed = new EmbedBuilder().setTitle('🎥 CREATOR APPLICATION').setDescription('¿Eres creador de contenido? ¡Postula aquí por tu rango!').setColor(0x9146FF);
+                const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('btn_open_creator').setLabel('Postular Ahora').setStyle(ButtonStyle.Primary));
+                return await interaction.editReply({ embeds: [embed], components: [row] });
+            }
+            if (interaction.commandName === 'panel-inquiry') {
+                const embed = new EmbedBuilder().setTitle('❓ DUDAS Y SOPORTE').setDescription('¿Tienes algún problema dentro del juego? Envía tu duda aquí.').setColor(0x00FF87);
+                const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('btn_open_inquiry').setLabel('Enviar Consulta').setStyle(ButtonStyle.Success));
+                return await interaction.editReply({ embeds: [embed], components: [row] });
             }
         }
-    }
 
-    const user = await interaction.client.users.fetch(targetId).catch(() => null);
-    if (user) {
-        await user.send('Your request has been reviewed. Type `=result` to view the outcome.').catch(() => {
-            console.log(`⚠️ Could not send DM to user ${targetId}. The user likely has Direct Messages disabled.`);
-        });
-    }
+        // ==========================================
+        // 2. MANEJO DE BOTONES (Formularios / Staff)
+        // ==========================================
+        if (interaction.isButton()) {
+            if (interaction.customId === 'btn_open_appeal') {
+                const modal = new ModalBuilder().setCustomId('modal_appeal').setTitle('Formulario de Apelación');
+                modal.addComponents(
+                    new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('q1').setLabel('¿Nombre de usuario en Roblox?').setStyle(TextInputStyle.Short).setRequired(true)),
+                    new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('q2').setLabel('¿Por qué fuiste baneado?').setStyle(TextInputStyle.Paragraph).setRequired(true)),
+                    new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('q3').setLabel('¿Por qué deberías ser desbaneado?').setStyle(TextInputStyle.Paragraph).setRequired(true)),
+                    new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('q4').setLabel('Pruebas (Links de fotos/videos)').setStyle(TextInputStyle.Short).setRequired(true))
+                );
+                return await interaction.showModal(modal);
+            }
+            if (interaction.customId === 'btn_open_creator') {
+                const modal = new ModalBuilder().setCustomId('modal_creator').setTitle('Postulación Creador');
+                modal.addComponents(
+                    new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('q1').setLabel('¿Nombre de usuario en Roblox?').setStyle(TextInputStyle.Short).setRequired(true)),
+                    new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('q2').setLabel('¿En qué plataforma subes videos?').setStyle(TextInputStyle.Short).setRequired(true)),
+                    new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('q3').setLabel('Link de tu canal o perfil').setStyle(TextInputStyle.Short).setRequired(true)),
+                    new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('q4').setLabel('¿Cuántos seguidores tienes?').setStyle(TextInputStyle.Short).setRequired(true)),
+                    new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('q5').setLabel('¿Por qué quieres el rango?').setStyle(TextInputStyle.Paragraph).setRequired(true))
+                );
+                return await interaction.showModal(modal);
+            }
+            if (interaction.customId === 'btn_open_inquiry') {
+                const modal = new ModalBuilder().setCustomId('modal_inquiry').setTitle('Nueva Consulta');
+                modal.addComponents(
+                    new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('q1').setLabel('¿Nombre de usuario en Roblox?').setStyle(TextInputStyle.Short).setRequired(true)),
+                    new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('q2').setLabel('¿Cuál es tu problema o duda breve?').setStyle(TextInputStyle.Short).setRequired(true)),
+                    new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('q3').setLabel('Explica los detalles aquí').setStyle(TextInputStyle.Paragraph).setRequired(true)),
+                    new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('q4').setLabel('Pruebas / Capturas (Opcional)').setStyle(TextInputStyle.Short).setRequired(false))
+                );
+                return await interaction.showModal(modal);
+            }
 
-    await interaction.reply({ content: `✅ Application successfully registered as **${action.toUpperCase()}**.`, ephemeral: true });
-});
+            // Acciones de Moderación (Botones del Staff)
+            if (interaction.customId.startsWith('staff_')) {
+                // 🔴 FIX 4: Reconstrucción e inmunidad de IDs que contengan caracteres "_" nativos
+                const parts = interaction.customId.split('_');
+                const action = parts[1];
+                const targetId = parts.slice(2).join('_');
+                if (!action || !targetId) return;
 
-// --- TRADITIONAL CHAT COMMAND TEXT LOOKUP: =result ---
-client.on('messageCreate', async message => {
-    if (message.author.bot) return;
+                let hasRole = false;
+                if (interaction.channelId === CONFIG.APPEAL.CHANNEL && interaction.member.roles.cache.has(CONFIG.APPEAL.ROLE)) hasRole = true;
+                if (interaction.channelId === CONFIG.CREATOR.CHANNEL && interaction.member.roles.cache.has(CONFIG.CREATOR.ROLE)) hasRole = true;
+                if (interaction.channelId === CONFIG.INQUIRY.CHANNEL && interaction.member.roles.cache.has(CONFIG.INQUIRY.ROLE)) hasRole = true;
 
-    if (message.content.toLowerCase() === '=result') {
-        const lookupResult = databaseDeResultados.get(message.author.id);
+                if (!hasRole) {
+                    return await smartReply(interaction, { content: '❌ No cuentas con los permisos o rol de Staff requeridos para este canal.', ephemeral: true });
+                }
 
-        if (!lookupResult) {
-            return message.reply('❌ You do not have any recently processed applications, or data cleared following a bot reboot cycle.');
+                if (action === 'approve' || action === 'deny') {
+                    const decisionModal = new ModalBuilder().setCustomId(`modal_decision_${action}_${targetId}`).setTitle(action === 'approve' ? 'Aprobar Solicitud' : 'Rechazar Solicitud');
+                    decisionModal.addComponents(new ActionRowBuilder().addComponents(
+                        new TextInputBuilder().setCustomId('staff_reason').setLabel('Mensaje / Justificación del Staff').setStyle(TextInputStyle.Paragraph).setRequired(true)
+                    ));
+                    return await interaction.showModal(decisionModal);
+                }
+
+                if (action === 'ticket') {
+                    await interaction.deferReply({ ephemeral: true });
+                    
+                    if (!CONFIG.PRIVATE_CATEGORY) {
+                        return await interaction.editReply({ content: '❌ Error: La categoría de tickets privados no está configurada.' });
+                    }
+
+                    // 🔴 FIX 2: Extracción asíncrona forzada vía REST para saltar fallas de caché frío de Shards
+                    const me = await interaction.guild.members.fetchMe().catch(() => null);
+                    if (!me || !me.permissions.has(PermissionFlagsBits.ManageChannels)) {
+                        return await interaction.editReply({ content: '❌ Error de permisos: El bot carece del permiso `Manage Channels` verificado en tiempo de ejecución.' });
+                    }
+
+                    const targetUser = await interaction.client.users.fetch(targetId).catch(() => null);
+                    
+                    const privateChannel = await interaction.guild.channels.create({
+                        name: `ticket-${targetUser ? targetUser.username : targetId}`,
+                        type: ChannelType.GuildText,
+                        parent: CONFIG.PRIVATE_CATEGORY,
+                        permissionOverwrites: [
+                            { id: interaction.guild.id, deny: [PermissionFlagsBits.ViewChannel] },
+                            { id: targetId, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages] },
+                            { id: interaction.user.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages] }
+                        ]
+                    }).catch(() => null);
+
+                    if (!privateChannel) {
+                        return await interaction.editReply({ content: '❌ Error: Fallo al instanciar el canal. Revisa los permisos de categoría.' });
+                    }
+                    
+                    await privateChannel.send(`👋 Hola <@${targetId}>! El Staff <@${interaction.user.id}> abrió este ticket para evaluar tu caso.`);
+                    return await interaction.editReply({ content: `✅ Canal de ticket creado exitosamente: ${privateChannel}` });
+                }
+            }
         }
 
-        const resultEmbed = new EmbedBuilder()
-            .setTitle('🎫 APPLICATION EVALUATION RESULT')
-            .setColor(lookupResult.status.includes('APPROVED') ? 0x00FF00 : 0xFF0000)
-            .addFields(
-                { name: 'Status:', value: lookupResult.status, inline: true },
-                { name: 'Reviewed By:', value: lookupResult.moderator, inline: true },
-                { name: 'Staff Note / Rationale:', value: lookupResult.reason }
-            )
-            .setTimestamp();
+        // ==========================================
+        // 3. MANEJO DE SUBMISSION DE MODALS
+        // ==========================================
+        if (interaction.isModalSubmit()) {
+            const userId = interaction.user.id;
 
-        await message.reply({ embeds: [resultEmbed] });
+            if (['modal_appeal', 'modal_creator', 'modal_inquiry'].includes(interaction.customId)) {
+                let sendChannel, targetRole, title, fields = [], finalMsg;
+
+                if (interaction.customId === 'modal_appeal') {
+                    sendChannel = CONFIG.APPEAL.CHANNEL; targetRole = CONFIG.APPEAL.ROLE; title = '🚨 NUEVA APELACIÓN'; finalMsg = '✅ Formulario enviado correctamente.';
+                    fields = [
+                        { name: 'User:', value: String(interaction.fields.getTextInputValue('q1') ?? 'N/A').slice(0, 1024) },
+                        { name: 'Motivo:', value: String(interaction.fields.getTextInputValue('q2') ?? 'N/A').slice(0, 1024) },
+                        { name: 'Sustento:', value: String(interaction.fields.getTextInputValue('q3') ?? 'N/A').slice(0, 1024) },
+                        { name: 'Pruebas:', value: String(interaction.fields.getTextInputValue('q4') ?? 'N/A').slice(0, 1024) }
+                    ];
+                } else if (interaction.customId === 'modal_creator') {
+                    sendChannel = CONFIG.CREATOR.CHANNEL; targetRole = CONFIG.CREATOR.ROLE; title = '🎥 NUEVA POSTULACIÓN CREADOR'; finalMsg = '✅ Postulación enviada correctamente.';
+                    fields = [
+                        { name: 'User:', value: String(interaction.fields.getTextInputValue('q1') ?? 'N/A').slice(0, 1024) },
+                        { name: 'Plataforma:', value: String(interaction.fields.getTextInputValue('q2') ?? 'N/A').slice(0, 1024) },
+                        { name: 'Link:', value: String(interaction.fields.getTextInputValue('q3') ?? 'N/A').slice(0, 1024) },
+                        { name: 'Seguidores:', value: String(interaction.fields.getTextInputValue('q4') ?? 'N/A').slice(0, 1024) },
+                        { name: 'Razón:', value: String(interaction.fields.getTextInputValue('q5') ?? 'N/A').slice(0, 1024) }
+                    ];
+                } else if (interaction.customId === 'modal_inquiry') {
+                    sendChannel = CONFIG.INQUIRY.CHANNEL; targetRole = CONFIG.INQUIRY.ROLE; title = '❓ NUEVA CONSULTA DE SOPORTE'; finalMsg = '✅ Consulta de soporte enviada.';
+                    fields = [
+                        { name: 'User:', value: String(interaction.fields.getTextInputValue('q1') ?? 'N/A').slice(0, 1024) },
+                        { name: 'Duda:', value: String(interaction.fields.getTextInputValue('q2') ?? 'N/A').slice(0, 1024) },
+                        { name: 'Detalles:', value: String(interaction.fields.getTextInputValue('q3') ?? 'N/A').slice(0, 1024) },
+                        { name: 'Adjuntos:', value: String(interaction.fields.getTextInputValue('q4') ?? 'No provisto').slice(0, 1024) }
+                    ];
+                }
+
+                if (!sendChannel) return await smartReply(interaction, { content: "❌ Error: Canal de configuración no definido.", ephemeral: true });
+                
+                const channel = await interaction.guild.channels.fetch(sendChannel).catch(() => null);
+                if (!channel) return await smartReply(interaction, { content: "❌ Error: El canal de destino no existe en el servidor.", ephemeral: true });
+
+                // 🔴 FIX 6: Rebanado estricto máximo de campos admitidos por el constructor de Embeds de Discord
+                const safeFields = fields.slice(0, 25);
+
+                const embedStaff = new EmbedBuilder().setTitle(title).setDescription(`Enviado por: <@${userId}> (${userId})`).addFields(safeFields).setColor(0x2F3136).setTimestamp();
+                const staffButtons = new ActionRowBuilder().addComponents(
+                    new ButtonBuilder().setCustomId(`staff_approve_${userId}`).setLabel('🟢 Aprobar').setStyle(ButtonStyle.Success),
+                    new ButtonBuilder().setCustomId(`staff_deny_${userId}`).setLabel('🔴 Rechazar').setStyle(ButtonStyle.Danger),
+                    new ButtonBuilder().setCustomId(`staff_ticket_${userId}`).setLabel('📩 Abrir Ticket').setStyle(ButtonStyle.Primary)
+                );
+
+                const msg = await channel.send({ content: `<@&${targetRole}>`, embeds: [embedStaff], components: [staffButtons] }).catch(() => null);
+                if (!msg) return await smartReply(interaction, { content: "❌ Error: El bot carece de permisos para escribir en el canal de Staff.", ephemeral: true });
+
+                messageDatabase[userId] = { messageId: msg.id, channelId: channel.id };
+                safeSave(MSG_FILE, messageDatabase);
+
+                return await smartReply(interaction, { content: finalMsg, ephemeral: true });
+            }
+
+            // CASO B: Resoluciones del Staff
+            if (interaction.customId.startsWith('modal_decision_')) {
+                const parts = interaction.customId.split('_');
+                const action = parts[2];
+                const targetId = parts.slice(3).join('_');
+                if (!action || !targetId) return;
+
+                const staffMsg = String(interaction.fields.getTextInputValue('staff_reason') ?? 'Sin especificar.').slice(0, 1024);
+
+                database[targetId] = {
+                    status: action === "approve" ? "approved" : "rejected",
+                    reason: staffMsg,
+                    moderator: interaction.user.tag,
+                    dmSent: false 
+                };
+
+                const data = messageDatabase?.[targetId];
+                if (data) {
+                    const channel = await interaction.guild.channels.fetch(data.channelId).catch(() => null);
+                    if (channel) {
+                        const message = await channel.messages.fetch(data.messageId).catch(() => null);
+                        
+                        if (message && message.embeds && message.embeds.length > 0) {
+                            const updatedEmbed = EmbedBuilder.from(message.embeds[0])
+                                .setFooter({ text: `Cerrado por: ${interaction.user.tag} (${action.toUpperCase()})` });
+                            await message.edit({ embeds: [updatedEmbed], components: [] }).catch(() => null);
+                        }
+                    }
+                }
+
+                // Notificación Directa al Usuario vía MD
+                const user = await interaction.client.users.fetch(targetId).catch(() => null);
+                if (user) {
+                    const embedUserNotify = new EmbedBuilder()
+                        .setTitle("🎫 ACTUALIZACIÓN DE TU SOLICITUD")
+                        .setColor(action === "approve" ? 0x00FF00 : 0xFF0000)
+                        .addFields(
+                            { name: "Estado Final:", value: action === "approve" ? "🟢 APROBADO" : "🔴 RECHAZADO" },
+                            { name: "Revisado Por:", value: interaction.user.tag },
+                            { name: "Razón del Veredicto:", value: staffMsg }
+                        )
+                        .setTimestamp();
+
+                    const dmSuccess = await user.send({ content: "👋 Tu solicitud ha sido evaluada:", embeds: [embedUserNotify] })
+                        .then(() => true)
+                        .catch(() => false);
+                    
+                    database[targetId].dmSent = dmSuccess;
+                }
+
+                safeSave(DB_FILE, database);
+
+                return await smartReply(interaction, { content: `✅ El veredicto ha sido guardado exitosamente como **${action.toUpperCase()}**.`, ephemeral: true });
+            }
+        }
+    } catch (globalError) {
+        console.error("💥 Captura de error de contingencia general:", globalError);
     }
 });
 
-// Authenticate and establish gateway socket connections to API
-client.login(CONFIG.TOKEN);
+// --- EVENT: COMANDO DE TEXTO TRADICIONAL (=result) ---
+client.on('messageCreate', async message => {
+    try {
+        if (message.author.bot) return;
+
+        if (message.content.toLowerCase() === '=result') {
+            const result = database[message.author.id];
+
+            if (!result) {
+                return void await message.reply("❌ No figura ninguna solicitud procesada bajo tu ID de Discord.");
+            }
+
+            const isApproved = result.status === "approved";
+            const visualStatus = isApproved ? "🟢 APROBADO" : "🔴 RECHAZADO";
+
+            const embed = new EmbedBuilder()
+                .setTitle("🎫 TU RESULTADO DE EVALUACIÓN")
+                .setColor(isApproved ? 0x00FF00 : 0xFF0000)
+                .addFields(
+                    { name: "Estado:", value: visualStatus, inline: true },
+                    { name: "Staff Evaluador:", value: result.moderator, inline: true },
+                    { name: "Razón / Detalles:", value: result.reason }
+                )
+                .setTimestamp();
+
+            await message.reply({ embeds: [embed] });
+        }
+    } catch (msgError) {
+        console.error("❌ Error procesando comando de texto:", msgError);
+    }
+});
+
+// 🔴 FIX 7: Captura asíncrona del flujo de login para evitar fallas silenciosas en la terminal de Render
+client.login(CONFIG.TOKEN).catch(err => {
+    console.error("❌ ERROR CRÍTICO AL INICIAR SESIÓN EN GATEWAY DE DISCORD:", err);
+    process.exit(1);
+});
