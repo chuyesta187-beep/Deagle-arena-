@@ -1,4 +1,5 @@
 const express = require("express");
+const fs = require("fs"); // 💾 Módulo nativo para leer/escribir archivos
 const app = express();
 
 const { 
@@ -21,7 +22,7 @@ const {
 
 // 🌐 EXPRESS WEB SERVER CONFIGURATION
 app.get("/", (req, res) => {
-    res.send("🤖 Discord Bot is active");
+    res.send("🤖 Discord Bot is active with Persistent Storage");
 });
 
 const PORT = process.env.PORT || 3000;
@@ -40,7 +41,7 @@ const client = new Client({
     partials: [Partials.Channel] 
 });
 
-// ⚙️ GLOBAL TICKET SYSTEM CONFIGURATION
+// ⚙️ GLOBAL TICKET SYSTEM CONFIGURATION (Asegúrate de que estos IDs existan)
 const CONFIG = {
     TOKEN: process.env.TOKEN,                  
     CLIENT_ID: '1521212807754809507',          
@@ -60,9 +61,26 @@ const CONFIG = {
     }
 };
 
-// 📂 IN-MEMORY STORAGE (Temporary Databases)
-const databaseDeResultados = new Map(); 
-const messageMap = new Map(); // Guarda la relación completa { messageId, channelId }
+// 💾 FUNCIONES DE PERSISTENCIA LOCAL (JSON ANTI-REINICIOS)
+function loadJSON(filename) {
+    if (fs.existsSync(filename)) {
+        try {
+            const data = JSON.parse(fs.readFileSync(filename, "utf-8"));
+            return new Map(data);
+        } catch (e) {
+            console.error(`Error leyendo ${filename}, creando nuevo Map.`, e);
+        }
+    }
+    return new Map();
+}
+
+function saveJSON(filename, mapData) {
+    fs.writeFileSync(filename, JSON.stringify([...mapData], null, 2), "utf-8");
+}
+
+// Carga inicial desde archivos locales
+const databaseDeResultados = loadJSON("./database.json");
+const messageMap = loadJSON("./messages.json");
 
 // --- EVENT: BOT READY & REGISTER SLASH COMMANDS ---
 client.once('ready', async () => {
@@ -176,6 +194,7 @@ client.on('interactionCreate', async interaction => {
     let sendChannel, targetRole, title, fields = [], finalMsg;
     const userId = interaction.user.id;
 
+    // Control estricto de Strings para evitar el error "channel not defined" 🛠️
     if (interaction.customId === 'modal_appeal') {
         sendChannel = CONFIG.APPEAL.CHANNEL;
         targetRole = CONFIG.APPEAL.ROLE;
@@ -215,7 +234,7 @@ client.on('interactionCreate', async interaction => {
 
     if (!sendChannel) {
         return interaction.reply({
-            content: "❌ Config error: channel not defined",
+            content: "❌ Config error: channel not defined. Revisa los IDs o los customId en los Modals.",
             ephemeral: true
         });
     }
@@ -248,11 +267,12 @@ client.on('interactionCreate', async interaction => {
         components: [staffButtons]
     });
 
-    // ✔ PASO EXCELENTE: Guardamos el par mapeado del ID del Mensaje + ID del Canal correcto
+    // Guardado de datos persistente en archivo local 🚀
     messageMap.set(userId, {
         messageId: msg.id,
         channelId: channel.id
     });
+    saveJSON("./messages.json", messageMap);
 
     await interaction.reply({ content: finalMsg, ephemeral: true });
 });
@@ -326,13 +346,15 @@ client.on('interactionCreate', async interaction => {
     const targetId = parts[3];     
     const staffMsg = interaction.fields.getTextInputValue('staff_reason');
 
+    // Guardar veredicto permanentemente en base de datos local JSON 💾
     databaseDeResultados.set(targetId, {
         status: action === 'approve' ? '🟢 APPROVED' : '🔴 REJECTED',
         reason: staffMsg,
         moderator: interaction.user.tag
     });
+    saveJSON("./database.json", databaseDeResultados);
 
-    // ✅ FIX CORRECTO APLICADO AQUÍ: Recuperamos de forma segura el canal e ID originales
+    // Búsqueda robusta inter-canales usando tu lógica mejorada 🌟
     const data = messageMap.get(targetId);
 
     if (data) {
@@ -371,7 +393,7 @@ client.on('messageCreate', async message => {
         const lookupResult = databaseDeResultados.get(message.author.id);
 
         if (!lookupResult) {
-            return message.reply('❌ You do not have any recently processed applications or data cleared following the latest bot reboot cycle.');
+            return message.reply('❌ You do not have any recently processed applications, or data cleared following a bot reboot cycle.');
         }
 
         const resultEmbed = new EmbedBuilder()
